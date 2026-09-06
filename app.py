@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import os
 import sys
+import pickle
 
 try:
     from dotenv import load_dotenv
@@ -52,19 +53,59 @@ def load_predictor():
 @st.cache_resource
 def load_chatbot():
     api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key or api_key == "your_actual_api_key_here":
+    if not api_key:
+        try:
+            if hasattr(st, "secrets") and "GEMINI_API_KEY" in st.secrets:
+                api_key = str(st.secrets["GEMINI_API_KEY"])
+        except Exception:
+            pass
+    if not api_key or api_key in ("your_actual_api_key_here", "your_gemini_api_key_here"):
         return None
-    db_path = os.path.join(os.path.dirname(__file__), 'credit_risk.db')
-    model_name = os.environ.get("GEMINI_MODEL_NAME", "gemini-3.5-flash-lite")
+
+    # SQLite Database (fallback to lightweight sample DB if full 1.77 GB DB is not present)
+    base_dir = os.path.dirname(__file__)
+    db_path = os.path.join(base_dir, 'credit_risk.db')
+    sample_db = os.path.join(base_dir, 'data', 'credit_risk_sample.db')
+    if not os.path.exists(db_path) and os.path.exists(sample_db):
+        db_path = sample_db
+
+    model_name = os.environ.get("GEMINI_MODEL_NAME")
+    if not model_name:
+        try:
+            if hasattr(st, "secrets") and "GEMINI_MODEL_NAME" in st.secrets:
+                model_name = str(st.secrets["GEMINI_MODEL_NAME"])
+        except Exception:
+            pass
+    if not model_name:
+        model_name = "gemini-3.5-flash-lite"
+
     return TalkToData(api_key=api_key, model_name=model_name, db_path=db_path)
 
 @st.cache_data
 def get_base_applicant():
-    """Reads a sample of the raw dataset to create a median 'base' profile for missing features."""
-    data_path = os.path.join(os.path.dirname(__file__), 'data', 'application_train.csv')
+    """Reads a sample of the raw dataset or precomputed base profile for missing features."""
+    base_dir = os.path.dirname(__file__)
+    profile_pkl = os.path.join(base_dir, 'models', 'base_applicant_profile.pkl')
+    data_path = os.path.join(base_dir, 'data', 'application_train.csv')
+    sample_parquet = os.path.join(base_dir, 'data', 'eda_sample.parquet')
+    
+    # 1. Fast path: load precomputed profile dictionary if available
+    if os.path.exists(profile_pkl):
+        try:
+            with open(profile_pkl, 'rb') as f:
+                return pickle.load(f)
+        except Exception:
+            pass
+
+    # 2. Fallback to sample or full dataset
     try:
-        df = pd.read_csv(data_path, nrows=5000)
-        # Create a single dictionary with medians for numeric and mode for categorical
+        if os.path.exists(data_path):
+            df = pd.read_csv(data_path, nrows=5000)
+        elif os.path.exists(sample_parquet):
+            df = pd.read_parquet(sample_parquet)
+        else:
+            return {}
+
         base_profile = {}
         for col in df.columns:
             if pd.api.types.is_numeric_dtype(df[col]):

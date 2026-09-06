@@ -5,6 +5,18 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
+def _get_env_or_secret(key: str, default: str = "") -> str:
+    """Retrieves config from environment variables, falling back to Streamlit secrets."""
+    val = os.environ.get(key)
+    if not val:
+        try:
+            import streamlit as st
+            if hasattr(st, "secrets") and key in st.secrets:
+                val = str(st.secrets[key])
+        except Exception:
+            pass
+    return val or default
+
 class Config:
     """Centralized configuration settings for the Credit Risk Platform."""
     
@@ -14,7 +26,11 @@ class Config:
     MODELS_DIR = BASE_DIR / "models"
     LOGS_DIR = BASE_DIR / "logs"
     NOTEBOOKS_DIR = BASE_DIR / "notebooks"
-    DATABASE_PATH = BASE_DIR / "credit_risk.db"
+    
+    # SQLite Database (falls back to lightweight sample DB if full 1.77 GB DB is not present)
+    _PRIMARY_DB = BASE_DIR / "credit_risk.db"
+    _SAMPLE_DB = DATA_DIR / "credit_risk_sample.db"
+    DATABASE_PATH = _PRIMARY_DB if _PRIMARY_DB.exists() else (_SAMPLE_DB if _SAMPLE_DB.exists() else _PRIMARY_DB)
     
     # Dataset Files
     APPLICATION_TRAIN_FILE = DATA_DIR / "application_train.csv"
@@ -24,11 +40,11 @@ class Config:
     PREVIOUS_APP_FILE = DATA_DIR / "previous_application.csv"
     INSTALLMENTS_FILE = DATA_DIR / "installments_payments.csv"
     
-    # Gemini LLM & Talk-To-Data Settings
-    GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-    GEMINI_MODEL_NAME = os.environ.get("GEMINI_MODEL_NAME", "gemini-3.5-flash-lite")
-    RATE_LIMIT_RPM = int(os.environ.get("RATE_LIMIT_RPM", 15))
-    RATE_LIMIT_RPD = int(os.environ.get("RATE_LIMIT_RPD", 500))
+    # Gemini LLM & Talk-To-Data Settings (checks os.environ and st.secrets)
+    GEMINI_API_KEY = _get_env_or_secret("GEMINI_API_KEY", "")
+    GEMINI_MODEL_NAME = _get_env_or_secret("GEMINI_MODEL_NAME", "gemini-3.5-flash-lite")
+    RATE_LIMIT_RPM = int(_get_env_or_secret("RATE_LIMIT_RPM", "15"))
+    RATE_LIMIT_RPD = int(_get_env_or_secret("RATE_LIMIT_RPD", "500"))
     
     # Credit Risk Classification Bands
     LOW_RISK_THRESHOLD = 0.30     # Prob < 30% -> Low Risk

@@ -23,12 +23,14 @@ COLOR_CYAN = "#06B6D4"      # Cyan
 
 @st.cache_data(show_spinner=False)
 def load_eda_dataset(sample_size: int = 30000):
-    """Loads a representative sample of application data and merged auxiliary signals."""
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    sample_parquet = os.path.join(base_dir, 'data', 'eda_sample.parquet')
     parquet_path = os.path.join(base_dir, 'data', 'merged_data.parquet')
     csv_path = os.path.join(base_dir, 'data', 'application_train.csv')
     
-    if os.path.exists(parquet_path):
+    if os.path.exists(sample_parquet):
+        df = pd.read_parquet(sample_parquet)
+    elif os.path.exists(parquet_path):
         # Read parquet directly for speed and merged feature richness
         df = pd.read_parquet(parquet_path)
         if len(df) > sample_size:

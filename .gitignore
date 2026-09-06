@@ -15,15 +15,17 @@ build/
 *.ipynb_checkpoints
 
 # ── Data & Model Artifacts ────────────────────────────────────────────────────
-# Raw source CSVs (too large for git — use git-lfs or share separately)
+# Raw source CSVs and full parquet (too large for git — use git-lfs or share separately)
 data/*.csv
 data/*.parquet
+!data/eda_sample.parquet
 
 # Model search log (model .pkl files are tracked so the platform runs out-of-the-box)
 models/automl.log
 
-# SQLite database (1.77 GB — never commit this)
+# SQLite database (1.77 GB full database is ignored; lightweight sample DB is tracked)
 credit_risk.db
+!data/credit_risk_sample.db
 
 # ── Secrets & Config ──────────────────────────────────────────────────────────
 .env
