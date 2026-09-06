@@ -1,0 +1,16 @@
+pandas
+numpy
+scikit-learn
+joblib
+google-genai
+matplotlib
+seaborn
+jupyter
+pyarrow
+flaml
+xgboost
+lightgbm
+shap
+python-dotenv
+streamlit
+plotly
