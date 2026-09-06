@@ -43,6 +43,7 @@ class Config:
     # Gemini LLM & Talk-To-Data Settings (checks os.environ and st.secrets)
     GEMINI_API_KEY = _get_env_or_secret("GEMINI_API_KEY", "")
     GEMINI_MODEL_NAME = _get_env_or_secret("GEMINI_MODEL_NAME", "gemini-3.5-flash-lite")
+    GEMINI_FALLBACK_MODELS = ["gemini-3.1-flash-lite", "gemini-3.5-flash"]
     RATE_LIMIT_RPM = int(_get_env_or_secret("RATE_LIMIT_RPM", "15"))
     RATE_LIMIT_RPD = int(_get_env_or_secret("RATE_LIMIT_RPD", "500"))
     
@@ -69,6 +70,7 @@ MODELS_DIR = Config.MODELS_DIR
 DATABASE_PATH = Config.DATABASE_PATH
 GEMINI_API_KEY = Config.GEMINI_API_KEY
 GEMINI_MODEL_NAME = Config.GEMINI_MODEL_NAME
+GEMINI_FALLBACK_MODELS = Config.GEMINI_FALLBACK_MODELS
 LOW_RISK_THRESHOLD = Config.LOW_RISK_THRESHOLD
 HIGH_RISK_THRESHOLD = Config.HIGH_RISK_THRESHOLD
 PENSIONER_ANOM_VALUE = Config.PENSIONER_ANOM_VALUE

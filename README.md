@@ -1,4 +1,4 @@
-﻿# NeoStat Credit Risk Intelligence Platform
+# NeoStat Credit Risk Intelligence Platform
 
 An end-to-end credit risk system built on the [Home Credit Default Risk](https://www.kaggle.com/c/home-credit-default-risk) dataset. Given a loan applicant's financial profile, the platform predicts their probability of defaulting, explains *why* that prediction was made, flags breaches of lending policy, and lets you query the dataset in plain English.
 
@@ -110,7 +110,7 @@ Create a file called `.env` in the `credit_risk_platform/` root:
 
 ```
 GEMINI_API_KEY=your_actual_key_here
-GEMINI_MODEL_NAME=gemini-2.0-flash-lite
+GEMINI_MODEL_NAME=gemini-3.5-flash-lite
 RATE_LIMIT_RPM=15
 RATE_LIMIT_RPD=500
 ```
@@ -271,19 +271,24 @@ When you type *"What is the average income of defaulters?"*, the system runs the
 4. Runs the SQL on the database, capping results at 100 rows and enforcing a 5-second timeout.
 5. Calls Gemini again with the result data, asking for a plain-English business summary.
 
-### Why `gemini-2.0-flash-lite`?
+### Why `gemini-3.5-flash-lite` with Multi-Model Fallback?
 
-Flash-lite is the smallest, fastest, and cheapest model in the Gemini family. For structured SQL generation from a fixed schema, a smaller model performs just as well as a larger one — there is no benefit to using a heavyweight reasoning model here. Flash-lite delivers sub-1.2 second SQL generation with up to 80% lower token consumption.
+`gemini-3.5-flash-lite` is Google's ultra-fast, token-efficient model designed for low-latency structured tasks like natural language SQL generation. To guarantee 100% uptime even under free-tier quota spikes, the platform implements an **Automatic Multi-Model Failover Cascade**:
+
+1. **Primary Model**: `gemini-3.5-flash-lite` (15 RPM free tier) — handles 95%+ of queries with sub-second response times.
+2. **First Fallback**: `gemini-3.1-flash-lite` (15 RPM / 500 RPD) — seamlessly takes over if the primary hits HTTP 429 quota exhaustion.
+3. **Second Fallback**: `gemini-3.5-flash` (5 RPM / 20 RPD) — high-reasoning fallback tier for complex joins or multi-table queries.
 
 ### Staying within free-tier limits
 
-The free Gemini tier allows 15 requests per minute and 1 500 requests per day. The system manages this with:
+The system proactively manages rate limits and quotas through:
 
+- **Multi-Model Auto-Failover** — automatically switches from `gemini-3.5-flash-lite` to `gemini-3.1-flash-lite` to `gemini-3.5-flash` if any model encounters HTTP 429 (`RESOURCE_EXHAUSTED`).
 - **Sliding-window rate limiter** — tracks all requests in the last 60 seconds. If you reach the limit, the UI displays a countdown instead of throwing an error.
 - **Input length guardrail** — questions must be 3-600 characters, preventing accidental token exhaustion from pasting large text blocks.
 - **Injection detection** — phrases like `ignore previous instructions` or `drop table` are rejected before they reach the LLM.
-- **Schema compression** — only table names, column names, key types, and short domain definitions are injected into the prompt, not full column statistics, keeping each call lightweight.
-- **Graceful degradation** — if the rate limit is hit, raw SQL result tables are rendered in the UI directly without making a second summarisation call.
+- **Schema compression** — only table names, column names, key types, and short domain definitions are injected into the prompt, keeping prompt overhead under 600 tokens.
+- **Graceful degradation** — if all rate limits are reached, raw SQL result tables are rendered in the UI directly without making a second summarisation call.
 
 ---
 

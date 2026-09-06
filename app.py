@@ -79,7 +79,13 @@ def load_chatbot():
     if not model_name:
         model_name = "gemini-3.5-flash-lite"
 
-    return TalkToData(api_key=api_key, model_name=model_name, db_path=db_path)
+    fallback_models = ["gemini-3.1-flash-lite", "gemini-3.5-flash"]
+    return TalkToData(
+        api_key=api_key, 
+        model_name=model_name, 
+        fallback_models=fallback_models,
+        db_path=db_path
+    )
 
 @st.cache_data
 def get_base_applicant():
@@ -346,6 +352,8 @@ elif page == "💬 Talk to Data":
     with col1:
         st.title("Talk to Data (Natural Language SQL)")
         st.markdown("Ask natural language questions about your SQLite database.")
+        if chatbot:
+            st.caption(f"🤖 **Primary Model**: `{chatbot.model_name}` | 🔄 **Auto-Failover**: `gemini-3.1-flash-lite`, `gemini-3.5-flash`")
     with col2:
         if chatbot:
             stats = chatbot.get_rate_limit_status()
@@ -353,14 +361,14 @@ elif page == "💬 Talk to Data":
 
     with st.expander("🛡️ Active Safeguards & Guardrail Policies"):
         st.markdown("""
-        * **Rate Limiting**: Sliding-window limiter strictly enforcing **15 RPM** & **500 RPD** with automatic cooldown.
+        * **Rate Limiting & Failover**: Auto-fallback across `gemini-3.5-flash-lite` -> `gemini-3.1-flash-lite` -> `gemini-3.5-flash` on HTTP 429 quota exhaustion.
         * **Input Guardrails**: Prompt injection detector & query length validator (3–600 characters).
         * **SQL Guardrails**: Read-only enforcement (`SELECT`/`WITH` CTE only); destructive commands (`DROP`, `DELETE`, `UPDATE`, etc.) and multi-statement injections are blocked.
         * **Database Protection**: Unconstrained queries automatically capped at `LIMIT 100` with a 5.0s query timeout.
         """)
     
     if chatbot is None:
-        st.error("GEMINI_API_KEY is missing. Please set it in your `.env` file.")
+        st.error("GEMINI_API_KEY is missing. Please set it in your `.env` file (locally) or in Streamlit Cloud Settings -> Secrets.")
     else:
         # Initialize chat history
         if "messages" not in st.session_state:

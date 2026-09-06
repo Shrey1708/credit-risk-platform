@@ -1,5 +1,5 @@
 import logging
-from typing import Optional, Dict, Any, Union
+from typing import Optional, Dict, Any, Union, List, Tuple
 import pandas as pd
 from google import genai
 from google.genai import types
@@ -37,6 +37,7 @@ class TalkToData:
     """
     Translates Natural Language queries into SQL, executes them against SQLite,
     and formats the response back into natural language with rigorous guardrails:
+    - Multi-model automatic fallback (gemini-3.5-flash-lite -> gemini-3.1-flash-lite -> gemini-3.5-flash)
     - Sliding-window rate limiting (15 RPM / 500 RPD)
     - Input injection detection
     - Read-only SQL enforcement
@@ -46,6 +47,7 @@ class TalkToData:
         self, 
         api_key: str = None, 
         model_name: str = Config.GEMINI_MODEL_NAME, 
+        fallback_models: Optional[List[str]] = None,
         db_path: str = str(Config.DATABASE_PATH),
         max_rpm: int = Config.RATE_LIMIT_RPM,
         max_rpd: int = Config.RATE_LIMIT_RPD
@@ -54,6 +56,7 @@ class TalkToData:
         # Configure modern Google GenAI Client
         self.client = genai.Client(api_key=actual_key)
         self.model_name = model_name
+        self.fallback_models = fallback_models if fallback_models is not None else list(Config.GEMINI_FALLBACK_MODELS)
         self.config = types.GenerateContentConfig(
             safety_settings=GEMINI_SAFETY_SETTINGS,
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
@@ -63,10 +66,53 @@ class TalkToData:
         self.input_guardrail = InputGuardrail(min_length=3, max_length=600)
         self.sql_guardrail = SQLGuardrail(default_limit=100, max_limit=500)
         self.last_error = None
+        self.last_model_used = model_name
 
     def get_rate_limit_status(self):
         """Returns the current rate limit usage stats."""
         return self.rate_limiter.get_status()
+
+    def _call_llm_with_fallback(self, prompt: str) -> Tuple[str, str]:
+        """
+        Executes an LLM request against the primary model, automatically
+        falling back to alternative models (e.g. gemini-3.1-flash-lite, gemini-3.5-flash)
+        if the primary model encounters rate limits (HTTP 429 ResourceExhausted) or transient errors.
+        Returns: (response_text, model_used)
+        """
+        candidate_models = [self.model_name] + [m for m in self.fallback_models if m != self.model_name]
+        last_exception = None
+
+        for idx, model in enumerate(candidate_models):
+            try:
+                logging.info(f"Invoking Gemini model: {model} (attempt {idx+1}/{len(candidate_models)})...")
+                response = self.client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config=self.config
+                )
+                self.rate_limiter.record_call()
+                self.last_model_used = model
+                if idx > 0:
+                    logging.warning(f"Successfully recovered using fallback model '{model}' after previous failure.")
+                return response.text.strip(), model
+            except Exception as e:
+                err_str = str(e)
+                is_rate_limit = "429" in err_str or "RESOURCE_EXHAUSTED" in err_str
+                last_exception = e
+                logging.warning(f"Model '{model}' attempt failed (rate_limit={is_rate_limit}): {err_str}")
+                
+                # If another candidate is available, switch to fallback
+                if idx < len(candidate_models) - 1:
+                    next_model = candidate_models[idx + 1]
+                    logging.info(f"Failing over to candidate model: '{next_model}'...")
+                    continue
+                else:
+                    if is_rate_limit:
+                        self.rate_limiter.record_resource_exhausted(cooldown_seconds=30.0)
+                        self.last_error = "Gemini API rate limit reached across all models (HTTP 429). Please wait 30s."
+                    else:
+                        self.last_error = f"Gemini API Error across all models: {err_str}"
+                    raise last_exception
 
     def _generate_sql(self, question: str, schema: str) -> str:
         """Calls the LLM to generate SQL based on the natural language question and database schema."""
@@ -75,13 +121,7 @@ class TalkToData:
         self.last_error = None
         
         try:
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=prompt,
-                config=self.config
-            )
-            self.rate_limiter.record_call()
-            sql_query = response.text.strip()
+            sql_query, used_model = self._call_llm_with_fallback(prompt)
             
             # Clean up markdown formatting if the model included it
             if sql_query.startswith("```sql"):
@@ -92,17 +132,8 @@ class TalkToData:
                 sql_query = sql_query[:-3]
                 
             return sql_query.strip()
-        except APIError as e:
-            if getattr(e, 'code', None) == 429 or "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                self.rate_limiter.record_resource_exhausted(cooldown_seconds=30.0)
-                self.last_error = "Gemini API rate limit reached (HTTP 429 ResourceExhausted). Please wait 30s."
-            else:
-                self.last_error = f"Gemini API Error: {e}"
-            logging.error(f"Error generating SQL: {self.last_error}")
-            return ""
         except Exception as e:
-            self.last_error = str(e)
-            logging.error(f"Error generating SQL: {e}")
+            logging.error(f"Error generating SQL: {self.last_error or e}")
             return ""
 
     def _generate_nl_response(self, question: str, sql_query: str, sql_results: str) -> str:
@@ -115,22 +146,13 @@ class TalkToData:
         logging.info("Calling Gemini API to generate natural language response...")
         
         try:
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=prompt,
-                config=self.config
-            )
-            self.rate_limiter.record_call()
-            return response.text.strip()
-        except APIError as e:
-            if getattr(e, 'code', None) == 429 or "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                self.rate_limiter.record_resource_exhausted(cooldown_seconds=30.0)
-                return "Gemini API rate limit reached (HTTP 429). Please wait 30s before generating another natural language response."
-            logging.error(f"Error generating NL response: {e}")
-            return f"Gemini API Error: {e}"
+            nl_response, used_model = self._call_llm_with_fallback(prompt)
+            return nl_response
         except Exception as e:
+            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                return "Gemini API rate limit reached across all models (HTTP 429). Please wait 30s before generating another response."
             logging.error(f"Error generating NL response: {e}")
-            return "Sorry, I encountered an error while formulating the response."
+            return f"Sorry, I encountered an error while formulating the response: {self.last_error or e}"
 
     def ask(self, question: str, return_dict: bool = False):
         """
